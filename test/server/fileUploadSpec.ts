@@ -6,7 +6,7 @@
 import chai from 'chai'
 import { challenges } from '../../data/datacache'
 import { type Challenge } from 'data/types'
-import { checkUploadSize, checkFileType } from '../../routes/fileUpload'
+import { checkUploadSize, checkFileType, handleYamlUpload } from '../../routes/fileUpload'
 
 const expect = chai.expect
 
@@ -53,6 +53,31 @@ describe('fileUpload', () => {
     checkFileType(req, res, () => {})
 
     expect(challenges.uploadTypeChallenge.solved).to.equal(true)
+  })
+
+  it('should not execute JavaScript-specific YAML tags during YAML upload handling', () => {
+    const originalDeprecatedInterfaceChallenge = challenges.deprecatedInterfaceChallenge
+    const originalYamlBombChallenge = challenges.yamlBombChallenge
+    const statusCodes: number[] = []
+    delete process.env.JUICE_SHOP_YAML_TOJSON_EXECUTED
+
+    challenges.deprecatedInterfaceChallenge = { solved: false, save } as unknown as Challenge
+    challenges.yamlBombChallenge = { solved: false, save } as unknown as Challenge
+    req.file.originalname = 'complaint.yml'
+    req.file.buffer = Buffer.from(`toJSON: !!js/function >
+  function () { process.env.JUICE_SHOP_YAML_TOJSON_EXECUTED = 'true'; return 'executed' }`)
+    res.status = (code: number) => {
+      statusCodes.push(code)
+      return res
+    }
+    res.end = () => {}
+
+    handleYamlUpload(req, res, () => {})
+
+    challenges.deprecatedInterfaceChallenge = originalDeprecatedInterfaceChallenge
+    challenges.yamlBombChallenge = originalYamlBombChallenge
+    expect(statusCodes).to.include(410)
+    expect(process.env.JUICE_SHOP_YAML_TOJSON_EXECUTED).to.equal(undefined)
   })
 
   it('should not solve "uploadTypeChallenge" when file type is PDF', () => {
